@@ -1,3 +1,4 @@
+```python
 import streamlit as st
 import feedparser
 import openai
@@ -5,11 +6,13 @@ import pyperclip
 import datetime
 from email.utils import parsedate_to_datetime
 import streamlit_authenticator as stauth
+import copy
 
-# --- Load Secrets ---
+# --- Access protection & API key from Secrets ---
 PASSWORD = st.secrets["PASSWORD"]
 openai.api_key = st.secrets["OPENAI_API_KEY"]
-credentials = st.secrets["credentials"]  # see Secrets.toml for structure
+# Deep copy credentials from secrets to allow internal modification
+credentials = copy.deepcopy(st.secrets["credentials"])
 
 # --- Authentication ---
 authenticator = stauth.Authenticate(
@@ -27,7 +30,7 @@ elif auth_status is None:
     st.warning("Please enter your credentials")
     st.stop()
 
-# Show logout button
+# Add logout button and show current user
 authenticator.logout("Logout", "sidebar")
 st.sidebar.write(f"Logged in as: {name}")
 
@@ -40,7 +43,7 @@ sector = st.selectbox("Select a sector", [
     "B2B Manufacturing & Logistics"
 ])
 
-# --- Keywords per sector ---
+# --- Keywords for each sector ---
 keywords_by_sector = {
     "Professional Services, Government, B2C & Tourism": ["services", "government", "tourism", "retail", "public policy"],
     "Real Estate": ["real estate", "property", "construction", "buildings"],
@@ -68,9 +71,7 @@ def fetch_recent_news(keywords):
         for e in feed.entries:
             try:
                 pub_dt = parsedate_to_datetime(e.get("published", ""))
-                pub_dt = (pub_dt.replace(tzinfo=datetime.timezone.utc)
-                          if pub_dt.tzinfo is None
-                          else pub_dt.astimezone(datetime.timezone.utc))
+                pub_dt = (pub_dt.replace(tzinfo=datetime.timezone.utc) if pub_dt.tzinfo is None else pub_dt.astimezone(datetime.timezone.utc))
             except Exception:
                 continue
             if pub_dt < one_week_ago:
@@ -88,7 +89,7 @@ def fetch_recent_news(keywords):
                 break
     return entries
 
-# --- GPT helpers ---
+# --- GPT helper ---
 def openai_chat(prompt, model="gpt-3.5-turbo", temp=0.2):
     resp = openai.chat.completions.create(
         model=model,
@@ -97,20 +98,22 @@ def openai_chat(prompt, model="gpt-3.5-turbo", temp=0.2):
     )
     return resp.choices[0].message.content.strip()
 
-# Filter relevant articles
+# --- GPT: Filter relevant articles ---
 def filter_news_with_gpt(news_list):
     headlines = "\n".join(news_list)
     prompt = f"""You are a research assistant for Sales at Oxford Economics.
-From these headlines, return only B2B-relevant items for European companies in the selected sector or macro topics.
-Sort newest first and include Title | Link | pubDate | Region.
+From this list of headlines (Title | Link | pubDate), return only those that are clearly B2B-relevant to European companies in the selected sector or relevant macro topics (tariffs, trade policy, supply-chain risk).
+Prioritize Bloomberg, Reuters, and FT content.
+
+Output each item as: Title | Link | pubDate | Region, one per line, sorted newest first:
 
 {headlines}
 """
     return openai_chat(prompt)
 
-# Assign persona, score impact, generate subject & email
+# --- GPT: Assign persona, score impact, generate subject & email ---
 assign_persona = lambda t: openai_chat(f"Given this headline: '{t}', list the single most relevant persona (job title) to target.")
-score_impact   = lambda t: openai_chat(f"Rate this B2B-impact on 1-5: '{t}'. Reply with the number.")
+score_impact   = lambda t: openai_chat(f"On a scale of 1–5, where 5 = highest business impact, rate this news headline: '{t}'. Reply with only the number.")
 generate_subject = lambda t: openai_chat(f"Write a 6-8 word email subject for headline: '{t}'.")
 generate_email   = lambda t,p: openai_chat(f"Persona: {p}\nHeadline: {t}\nWrite a concise outreach email.", temp=0.7)
 
@@ -149,3 +152,4 @@ if st.button("🔍 Fetch & Analyze Relevant News"):
                     if st.button("📋 Copy to clipboard", key=f"copy_{i}"):
                         pyperclip.copy(f"Subject: {subject}\n\n{email}")
                         st.success("Email copied to clipboard. Paste into Outlook to send.")
+```
