@@ -1,4 +1,3 @@
-```python
 import streamlit as st
 import feedparser
 import openai
@@ -11,7 +10,7 @@ import copy
 # --- Access protection & API key from Secrets ---
 PASSWORD = st.secrets["PASSWORD"]
 openai.api_key = st.secrets["OPENAI_API_KEY"]
-# Deep copy credentials from secrets to allow internal modification
+# Deep copy credentials so authenticator can modify them internally
 credentials = copy.deepcopy(st.secrets["credentials"])
 
 # --- Authentication ---
@@ -30,7 +29,7 @@ elif auth_status is None:
     st.warning("Please enter your credentials")
     st.stop()
 
-# Add logout button and show current user
+# Logout button & show user
 authenticator.logout("Logout", "sidebar")
 st.sidebar.write(f"Logged in as: {name}")
 
@@ -51,7 +50,7 @@ keywords_by_sector = {
     "B2B Manufacturing & Logistics": ["manufacturing", "logistics", "supply chain", "industrial", "infrastructure", "DACH"]
 }
 
-# --- Fetch recent news ---
+# --- Fetch news from RSS and keep only last 7 days ---
 def fetch_recent_news(keywords):
     encoded = [kw.replace(" ", "+") for kw in keywords]
     query = "+".join(encoded)
@@ -71,7 +70,10 @@ def fetch_recent_news(keywords):
         for e in feed.entries:
             try:
                 pub_dt = parsedate_to_datetime(e.get("published", ""))
-                pub_dt = (pub_dt.replace(tzinfo=datetime.timezone.utc) if pub_dt.tzinfo is None else pub_dt.astimezone(datetime.timezone.utc))
+                if pub_dt.tzinfo is None:
+                    pub_dt = pub_dt.replace(tzinfo=datetime.timezone.utc)
+                else:
+                    pub_dt = pub_dt.astimezone(datetime.timezone.utc)
             except Exception:
                 continue
             if pub_dt < one_week_ago:
@@ -113,9 +115,9 @@ Output each item as: Title | Link | pubDate | Region, one per line, sorted newes
 
 # --- GPT: Assign persona, score impact, generate subject & email ---
 assign_persona = lambda t: openai_chat(f"Given this headline: '{t}', list the single most relevant persona (job title) to target.")
-score_impact   = lambda t: openai_chat(f"On a scale of 1–5, where 5 = highest business impact, rate this news headline: '{t}'. Reply with only the number.")
+score_impact    = lambda t: openai_chat(f"On a scale of 1–5, where 5 = highest business impact, rate this news headline: '{t}'. Reply with only the number.")
 generate_subject = lambda t: openai_chat(f"Write a 6-8 word email subject for headline: '{t}'.")
-generate_email   = lambda t,p: openai_chat(f"Persona: {p}\nHeadline: {t}\nWrite a concise outreach email.", temp=0.7)
+generate_email   = lambda t, p: openai_chat(f"Persona: {p}\nHeadline: {t}\nWrite a concise outreach email.", temp=0.7)
 
 # --- Main process ---
 if st.button("🔍 Fetch & Analyze Relevant News"):
@@ -134,8 +136,9 @@ if st.button("🔍 Fetch & Analyze Relevant News"):
             else:
                 st.success("GPT filtered relevant news.")
                 for i, row in enumerate(filtered.split("\n")):
-                    if "|" not in row: continue
-                    title, link, pubDate = [p.strip() for p in row.split("|",2)]
+                    if "|" not in row:
+                        continue
+                    title, link, pubDate = [p.strip() for p in row.split("|", 2)]
                     st.markdown(f"### {i+1}. {title}")
                     st.markdown(f"🗓️ {pubDate} | 🔗 [Source]({link})")
 
@@ -152,4 +155,3 @@ if st.button("🔍 Fetch & Analyze Relevant News"):
                     if st.button("📋 Copy to clipboard", key=f"copy_{i}"):
                         pyperclip.copy(f"Subject: {subject}\n\n{email}")
                         st.success("Email copied to clipboard. Paste into Outlook to send.")
-```
