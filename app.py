@@ -10,7 +10,7 @@ import streamlit_authenticator as stauth
 PASSWORD = st.secrets["PASSWORD"]
 openai.api_key = st.secrets["OPENAI_API_KEY"]
 # Build credentials dict from secrets
-credentials = {"usernames": st.secrets["credentials"]["usernames"]}
+credentials = {"usernames": dict(st.secrets["credentials"]["usernames"])}
 
 # --- Authentication ---
 authenticator = stauth.Authenticate(
