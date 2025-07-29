@@ -41,7 +41,9 @@ def fetch_recent_news(keywords):
         "https://feeds.reuters.com/reuters/businessNews",
         "https://feeds.reuters.com/reuters/worldNews",
         "https://www.bloomberg.com/feed/podcast/bloomberg-surveillance.xml",
-        f"https://www.bing.com/news/search?q={query}&format=rss"
+        f"https://www.bing.com/news/search?q={query}&format=rss",
+        "https://www.ft.com/news-feed?format=rss"
+
     ]
     one_week_ago = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=7)
     entries = []
