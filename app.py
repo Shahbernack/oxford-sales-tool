@@ -34,8 +34,8 @@ keywords_by_sector = {
 def filter_news_with_gpt(news_list):
     headlines = "\n".join(news_list)
     prompt = f"""Act as a research assistant for Sales at Oxford Economics.
-From this list of headlines (Title | Link | pubDate), return only those that are clearly B2B-relevant to companies in Europe and to the selected sector or macro-level topics (tariffs, trade policy, supply-chain risk) likely to affect it.
-Try to use Bloomberg and Reuters first. Only include items from the last 7 days.
+From this list of headlines (Title | Link | pubDate), return only those that are not older than a week and are clearly B2B-relevant to companies in Europe and to the selected sector or macro-level topics (tariffs, trade policy, supply-chain risk) likely to affect it.
+Try to use Bloomberg and Reuters first. 
 
 Output each item as: Title | Link | pubDate | Region, one per line, sorted newest first:
 
