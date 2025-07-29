@@ -43,7 +43,6 @@ def fetch_recent_news(keywords):
         "https://www.bloomberg.com/feed/podcast/bloomberg-surveillance.xml",
         f"https://www.bing.com/news/search?q={query}&format=rss"
     ]
-    # Erstelle ein bewusstes UTC-Datum 7 Tage zurück
     one_week_ago = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=7)
     entries = []
     seen_links = set()
@@ -51,25 +50,20 @@ def fetch_recent_news(keywords):
     for url in feeds:
         feed = feedparser.parse(url)
         for entry in feed.entries:
-            # Datum parsen, skip bei Fehler
             try:
                 pub_dt = parsedate_to_datetime(entry.get("published", ""))
-                # Stelle sicher, dass pub_dt ein UTC-aware datetime ist
                 if pub_dt.tzinfo is None:
                     pub_dt = pub_dt.replace(tzinfo=datetime.timezone.utc)
                 else:
                     pub_dt = pub_dt.astimezone(datetime.timezone.utc)
             except Exception:
                 continue
-            # Nur Artikel der letzten 7 Tage
             if pub_dt < one_week_ago:
                 continue
-
             link = entry.get("link", "")
             if link in seen_links:
                 continue
             seen_links.add(link)
-
             title = entry.get("title", "")
             pub_str = entry.get("published", "")
             entries.append(f"{title} | {link} | {pub_str}")
@@ -153,23 +147,29 @@ if st.button("🔍 Relevante News abrufen & analysieren"):
         if not raw_news:
             st.warning("Keine News der letzten Woche gefunden.")
         else:
+            with st.expander("Roh gefundene News"):
+                for entry in raw_news:
+                    st.write(entry)
             filtered = filter_news_with_gpt(raw_news)
-            st.success("GPT hat relevante News gefiltert.")
-            rows = filtered.split("\n")
-            for i, row in enumerate(rows):
-                if "|" not in row:
-                    continue
-                title, link, pubDate = [p.strip() for p in row.split("|", 2)]
-                st.markdown(f"### {i+1}. {title}")
-                st.markdown(f"🗓️ {pubDate} | 🔗 [Quelle]({link})")
-                impact = score_impact(title)
-                persona = assign_persona(title)
-                subject = generate_subject(title)
-                email = generate_email(title, persona)
-                st.write(f"**📊 Impact Score:** {impact}/5")
-                st.write(f"**👤 Persona:** {persona}")
-                st.text_input("✉️ Betreff", subject, key=f"subject_{i}")
-                st.text_area("📧 E-Mail-Vorschlag", email, height=200, key=f"email_{i}")
-                if st.button("📋 In Zwischenablage kopieren", key=f"copy_{i}"):
-                    pyperclip.copy(f"Subject: {subject}\n\n{email}")
-                    st.success("E-Mail in Zwischenablage kopiert. Jetzt in Outlook einfügen.")
+            if not filtered:
+                st.warning("GPT hat keine relevanten News gefunden.")
+            else:
+                st.success("GPT hat relevante News gefiltert.")
+                rows = filtered.split("\n")
+                for i, row in enumerate(rows):
+                    if "|" not in row:
+                        continue
+                    title, link, pubDate = [p.strip() for p in row.split("|", 2)]
+                    st.markdown(f"### {i+1}. {title}")
+                    st.markdown(f"🗓️ {pubDate} | 🔗 [Quelle]({link})")
+                    impact = score_impact(title)
+                    persona = assign_persona(title)
+                    subject = generate_subject(title)
+                    email = generate_email(title, persona)
+                    st.write(f"**📊 Impact Score:** {impact}/5")
+                    st.write(f"**👤 Persona:** {persona}")
+                    st.text_input("✉️ Betreff", subject, key=f"subject_{i}")
+                    st.text_area("📧 E-Mail-Vorschlag", email, height=200, key=f"email_{i}")
+                    if st.button("📋 In Zwischenablage kopieren", key=f"copy_{i}"):
+                        pyperclip.copy(f"Subject: {subject}\n\n{email}")
+                        st.success("E-Mail in Zwischenablage kopiert. Jetzt in Outlook einfügen.")
