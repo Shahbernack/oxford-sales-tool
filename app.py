@@ -42,8 +42,7 @@ authenticator = stauth.Authenticate(
     cookie_expiry_days=1
 )
 
-# -- Login (nutzt default location='main') ---
-# Wenn das Login-Feld in der Sidebar stehen soll:
+# --- Login (Location as keyword!) ---
 name, auth_status, username = authenticator.login("Login", location="sidebar")
 if not auth_status:
     st.stop()
@@ -64,7 +63,7 @@ if not stats_df.empty:
         (name,)
     ).fetchone()[0]
     total = stats_df.loc[1, 'count']
-    rate = f"{succ}/{total} ({succ/total:.0%})" if total>0 else "N/A"
+    rate = f"{succ}/{total} ({succ/total:.0%})" if total > 0 else "N/A"
     st.sidebar.write("Success rate:", rate)
 
 # --- UI ---
@@ -103,12 +102,15 @@ def fetch_recent_news(keywords):
                 pub_dt = pub_dt.replace(tzinfo=datetime.timezone.utc) if pub_dt.tzinfo is None else pub_dt.astimezone(datetime.timezone.utc)
             except:
                 continue
-            if pub_dt < one_week_ago: continue
+            if pub_dt < one_week_ago:
+                continue
             link = e.get("link","")
-            if link in seen: continue
+            if link in seen:
+                continue
             seen.add(link)
             entries.append(f"{e.get('title','')} | {link} | {e.get('published','')}")
-            if len(entries)>=20: break
+            if len(entries) >= 20:
+                break
     return entries
 
 def openai_chat(prompt, model="gpt-3.5-turbo", temp=0.2):
@@ -149,8 +151,9 @@ if st.button("🔍 Fetch & Analyze"):
             st.warning("GPT found no relevant news.")
         else:
             for i, row in enumerate(filtered.split("\n")):
-                if "|" not in row: continue
-                title, link, pubDate = [p.strip() for p in row.split("|",3)][:3]
+                if "|" not in row:
+                    continue
+                title, link, pubDate = [p.strip() for p in row.split("|", 3)][:3]
                 st.markdown(f"### {i+1}. [{title}]({link})")
                 st.markdown(f"🗓️ {pubDate}")
 
