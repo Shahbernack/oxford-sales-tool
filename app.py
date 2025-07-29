@@ -78,7 +78,7 @@ def filter_news_with_gpt(news_list):
     headlines = "\n".join(news_list)
     prompt = f"""Act as a research assistant for Sales at Oxford Economics.
 From this list of headlines (Title | Link | pubDate), return only those that are clearly B2B-relevant to companies in Europe in the selected sector or macro-level topics (tariffs, trade policy, supply-chain risk).
-Try to use Bloomberg and Reuters first.
+Try to use Financial Times first.
 
 Output each item as: Title | Link | pubDate | Region, one per line, sorted newest first:
 
