@@ -24,7 +24,7 @@ authenticator = stauth.Authenticate(
     key="oxford_signature",
     cookie_expiry_days=1
 )
-name, auth_status, username = authenticator.login("Login", "sidebar")
+name, auth_status, username = authenticator.login("Login", "main")
 
 if auth_status is False:
     st.error("Username/password is incorrect")
