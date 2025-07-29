@@ -2,6 +2,8 @@ import streamlit as st
 import feedparser
 import openai
 import pyperclip
+import datetime
+from email.utils import parsedate_to_datetime
 
 # --- Zugangsschutz & API-Key aus Secrets ---
 PASSWORD = st.secrets["PASSWORD"]
@@ -30,12 +32,48 @@ keywords_by_sector = {
     "B2B Manufacturing & Logistics": ["manufacturing", "logistics", "supply chain", "industrial", "infrastructure", "DACH"]
 }
 
+# --- News abrufen und nur Artikel der letzten 7 Tage behalten ---
+def fetch_recent_news(keywords):
+    encoded = [kw.replace(" ", "+") for kw in keywords]
+    query = "+".join(encoded)
+    feeds = [
+        f"https://news.google.com/rss/search?q={query}",
+        "https://feeds.reuters.com/reuters/businessNews",
+        "https://feeds.reuters.com/reuters/worldNews",
+        "https://www.bloomberg.com/feed/podcast/bloomberg-surveillance.xml",
+        f"https://www.bing.com/news/search?q={query}&format=rss"
+    ]
+    one_week_ago = datetime.datetime.utcnow() - datetime.timedelta(days=7)
+    entries = []
+    seen_links = set()
+
+    for url in feeds:
+        feed = feedparser.parse(url)
+        for entry in feed.entries:
+            # Datum parsen, skip bei Fehler
+            try:
+                pub_dt = parsedate_to_datetime(entry.get("published", ""))
+            except Exception:
+                continue
+            if pub_dt < one_week_ago:
+                continue
+            link = entry.get("link", "")
+            if link in seen_links:
+                continue
+            seen_links.add(link)
+            title = entry.get("title", "")
+            pub_str = entry.get("published", "")
+            entries.append(f"{title} | {link} | {pub_str}")
+            if len(entries) >= 20:
+                break
+    return entries
+
 # --- GPT: Filtere relevante Artikel ---
 def filter_news_with_gpt(news_list):
     headlines = "\n".join(news_list)
     prompt = f"""Act as a research assistant for Sales at Oxford Economics.
-From this list of headlines (Title | Link | pubDate), return only those that are not older than a week and are clearly B2B-relevant to companies in Europe and to the selected sector or macro-level topics (tariffs, trade policy, supply-chain risk) likely to affect it.
-Try to use Bloomberg and Reuters first. 
+From this list of headlines (Title | Link | pubDate), return only those that are clearly B2B-relevant to companies in Europe in the selected sector or macro-level topics (tariffs, trade policy, supply-chain risk).
+Try to use Bloomberg and Reuters first.
 
 Output each item as: Title | Link | pubDate | Region, one per line, sorted newest first:
 
@@ -77,7 +115,6 @@ Use this news headline to write a concise outreach email that:
 - Outlines a plausible business impact,
 - Briefly mentions Oxford Economics’ economic insight,
 - Ends with an invitation for a short call.
-- Is Short
 
 Persona: {persona}
 Headline: {title}
@@ -100,38 +137,12 @@ def generate_subject(title):
     )
     return response.choices[0].message.content.strip()
 
-# --- News abrufen und Keywords URL-encoden ---
-def fetch_news(keywords):
-    encoded = [kw.replace(" ", "+") for kw in keywords]
-    query = "+".join(encoded)
-    feeds = [
-        f"https://news.google.com/rss/search?q={query}",
-        "https://feeds.reuters.com/reuters/businessNews",
-        "https://feeds.reuters.com/reuters/worldNews",
-        "https://www.bloomberg.com/feed/podcast/bloomberg-surveillance.xml",
-        f"https://www.bing.com/news/search?q={query}&format=rss"
-    ]
-    entries = []
-    seen_links = set()
-    for url in feeds:
-        feed = feedparser.parse(url)
-        for entry in feed.entries:
-            link = entry.get("link", "")
-            if link not in seen_links:
-                seen_links.add(link)
-                title = entry.get("title", "")
-                pubDate = entry.get("published", "")
-                entries.append(f"{title} | {link} | {pubDate}")
-                if len(entries) >= 20:
-                    break
-    return entries
-
 # --- Hauptablauf ---
 if st.button("🔍 Relevante News abrufen & analysieren"):
     with st.spinner("Lade News..."):
-        raw_news = fetch_news(keywords_by_sector[sector])
+        raw_news = fetch_recent_news(keywords_by_sector[sector])
         if not raw_news:
-            st.warning("Keine News gefunden.")
+            st.warning("Keine News der letzten Woche gefunden.")
         else:
             filtered = filter_news_with_gpt(raw_news)
             st.success("GPT hat relevante News gefiltert.")
@@ -139,10 +150,7 @@ if st.button("🔍 Relevante News abrufen & analysieren"):
             for i, row in enumerate(rows):
                 if "|" not in row:
                     continue
-                parts = [p.strip() for p in row.split("|")]
-                if len(parts) < 3:
-                    continue
-                title, link, pubDate = parts[0], parts[1], parts[2]
+                title, link, pubDate = [p.strip() for p in row.split("|", 2)]
                 st.markdown(f"### {i+1}. {title}")
                 st.markdown(f"🗓️ {pubDate} | 🔗 [Quelle]({link})")
                 impact = score_impact(title)
