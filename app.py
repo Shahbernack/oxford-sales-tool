@@ -43,7 +43,8 @@ authenticator = stauth.Authenticate(
 )
 
 # -- Login (nutzt default location='main') ---
-name, auth_status, username = authenticator.login("Login")
+# Wenn das Login-Feld in der Sidebar stehen soll:
+name, auth_status, username = authenticator.login("Login", "sidebar")
 if not auth_status:
     st.stop()
 
