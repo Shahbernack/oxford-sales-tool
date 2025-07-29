@@ -8,10 +8,10 @@ import sqlite3
 import pandas as pd
 
 # --- Secrets & OpenAI Key ---
-PASSWORD = st.secrets["PASSWORD"]               # e.g. "OETool2025&"
+PASSWORD = st.secrets["PASSWORD"]
 openai.api_key = st.secrets["OPENAI_API_KEY"]
 
-# --- Load all users from Secrets (including guest, Shah, Marvin, Janis, etc.) ---
+# --- Load all users from Secrets ---
 users = dict(st.secrets["credentials"]["usernames"])
 
 # --- Session State for Auth + Data Persistence ---
@@ -56,21 +56,26 @@ CREATE TABLE IF NOT EXISTS outreach (
 """)
 conn.commit()
 
-# --- Sidebar Statistics ---
-stats_df = pd.read_sql_query(
-    "SELECT used, COUNT(*) AS count FROM outreach WHERE user = ? GROUP BY used",
-    conn, params=(st.session_state.username,)
-)
-if not stats_df.empty:
-    stats_df = stats_df.set_index('used').reindex([0,1], fill_value=0)
-    st.sidebar.bar_chart(stats_df['count'], use_container_width=True)
-    succ = c.execute(
-        "SELECT COUNT(*) FROM outreach WHERE user=? AND success=1",
-        (st.session_state.username,)
-    ).fetchone()[0]
-    total = int(stats_df.loc[1, 'count'])
-    rate = f"{succ}/{total} ({succ/total:.0%})" if total > 0 else "N/A"
-    st.sidebar.write("Success rate:", rate)
+# --- Sidebar Statistics & Reset ---
+# Fetch counts
+user = st.session_state.username
+attempts = c.execute("SELECT COUNT(*) FROM outreach WHERE user=? AND used=1", (user,)).fetchone()[0]
+succ = c.execute("SELECT COUNT(*) FROM outreach WHERE user=? AND success=1", (user,)).fetchone()[0]
+fail = c.execute("SELECT COUNT(*) FROM outreach WHERE user=? AND success=0", (user,)).fetchone()[0]
+
+# Build DataFrame for bar chart
+stats_df = pd.DataFrame({
+    "count": [attempts, succ, fail]
+}, index=["Attempts", "Successes", "Failures"])
+
+st.sidebar.bar_chart(stats_df["count"], use_container_width=True)
+st.sidebar.write(f"Success rate: {succ}/{attempts} ({(succ/attempts*100) if attempts>0 else 0:.0f}%)")
+
+# Reset button
+if st.sidebar.button("Reset stats"):
+    c.execute("DELETE FROM outreach WHERE user=?", (user,))
+    conn.commit()
+    st.experimental_rerun()
 
 # --- Main UI ---
 st.title("Oxford Economics – Sales Email Tool")
@@ -180,21 +185,21 @@ if st.session_state.filtered_news:
         if col1.button("Mark as Used", key=f"used_{i}"):
             c.execute(
                 "INSERT INTO outreach(user,title,used) VALUES (?,?,1)",
-                (st.session_state.username, title)
+                (user, title)
             )
             conn.commit()
             st.success("Marked as used")
         if col2.button("✔️ Success", key=f"succ_{i}"):
             c.execute(
                 "UPDATE outreach SET success=1 WHERE user=? AND title=? ORDER BY ts DESC LIMIT 1",
-                (st.session_state.username, title)
+                (user, title)
             )
             conn.commit()
             st.success("Marked success")
         if col3.button("❌ Fail", key=f"fail_{i}"):
             c.execute(
                 "UPDATE outreach SET success=0 WHERE user=? AND title=? ORDER BY ts DESC LIMIT 1",
-                (st.session_state.username, title)
+                (user, title)
             )
             conn.commit()
             st.error("Marked fail")
