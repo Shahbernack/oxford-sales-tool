@@ -5,13 +5,12 @@ import pyperclip
 import datetime
 from email.utils import parsedate_to_datetime
 import streamlit_authenticator as stauth
-import copy
 
 # --- Access protection & API key from Secrets ---
 PASSWORD = st.secrets["PASSWORD"]
 openai.api_key = st.secrets["OPENAI_API_KEY"]
-# Deep copy credentials so authenticator can modify them internally
-credentials = copy.deepcopy(st.secrets["credentials"])
+# Build credentials dict from secrets
+credentials = {"usernames": st.secrets["credentials"]["usernames"]}
 
 # --- Authentication ---
 authenticator = stauth.Authenticate(
@@ -114,10 +113,10 @@ Output each item as: Title | Link | pubDate | Region, one per line, sorted newes
     return openai_chat(prompt)
 
 # --- GPT: Assign persona, score impact, generate subject & email ---
-assign_persona = lambda t: openai_chat(f"Given this headline: '{t}', list the single most relevant persona (job title) to target.")
+assign_persona   = lambda t: openai_chat(f"Given this headline: '{t}', list the single most relevant persona (job title) to target.")
 score_impact    = lambda t: openai_chat(f"On a scale of 1–5, where 5 = highest business impact, rate this news headline: '{t}'. Reply with only the number.")
 generate_subject = lambda t: openai_chat(f"Write a 6-8 word email subject for headline: '{t}'.")
-generate_email   = lambda t, p: openai_chat(f"Persona: {p}\nHeadline: {t}\nWrite a concise outreach email.", temp=0.7)
+generate_email   = lambda t,p: openai_chat(f"Persona: {p}\nHeadline: {t}\nWrite a concise outreach email.", temp=0.7)
 
 # --- Main process ---
 if st.button("🔍 Fetch & Analyze Relevant News"):
