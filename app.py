@@ -14,15 +14,17 @@ openai.api_key = st.secrets["OPENAI_API_KEY"]
 # --- Load all users from Secrets ---
 users = dict(st.secrets["credentials"]["usernames"])
 
-# --- Session State for Auth + Data Persistence ---
+# --- Session State for Auth + Data Persistence + Easter Egg ---
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 if "raw_news" not in st.session_state:
     st.session_state.raw_news = []
 if "filtered_news" not in st.session_state:
     st.session_state.filtered_news = ""
+if "easter_count" not in st.session_state:
+    st.session_state.easter_count = 0
 
-# --- Sidebar Login / Logout ---
+# --- Sidebar Login / Logout / Easter Egg ---
 with st.sidebar:
     if not st.session_state.authenticated:
         st.header("Login")
@@ -37,6 +39,17 @@ with st.sidebar:
         st.stop()
     else:
         st.write(f"Logged in as **{users[st.session_state.username]['name']}**")
+
+        # Easter Egg: click 3× for Jim glance
+        if st.button("🐰 Surprise me!"):
+            st.session_state.easter_count += 1
+
+        if st.session_state.easter_count >= 3:
+            st.image(
+                "https://media.giphy.com/media/3oEjI6SIIHBdRxXI40/giphy.gif",
+                caption="Jim knows what's up."
+            )
+
         if st.button("Logout"):
             st.session_state.authenticated = False
             st.experimental_rerun()
@@ -46,33 +59,38 @@ conn = sqlite3.connect('outreach.db', check_same_thread=False)
 c = conn.cursor()
 c.execute("""
 CREATE TABLE IF NOT EXISTS outreach (
-  id INTEGER PRIMARY KEY,
-  user TEXT,
-  title TEXT,
-  ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  used INTEGER,
+  id      INTEGER PRIMARY KEY,
+  user    TEXT,
+  title   TEXT,
+  ts      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  used    INTEGER,
   success INTEGER
 )
 """)
 conn.commit()
 
 # --- Sidebar Statistics & Reset ---
-# Fetch counts
 user = st.session_state.username
-attempts = c.execute("SELECT COUNT(*) FROM outreach WHERE user=? AND used=1", (user,)).fetchone()[0]
-succ = c.execute("SELECT COUNT(*) FROM outreach WHERE user=? AND success=1", (user,)).fetchone()[0]
-fail = c.execute("SELECT COUNT(*) FROM outreach WHERE user=? AND success=0", (user,)).fetchone()[0]
+attempts = c.execute(
+    "SELECT COUNT(*) FROM outreach WHERE user=? AND used=1", (user,)
+).fetchone()[0]
+succ = c.execute(
+    "SELECT COUNT(*) FROM outreach WHERE user=? AND success=1", (user,)
+).fetchone()[0]
+fail = c.execute(
+    "SELECT COUNT(*) FROM outreach WHERE user=? AND success=0", (user,)
+).fetchone()[0]
 
-# Build DataFrame for bar chart
 stats_df = pd.DataFrame({
     "count": [attempts, succ, fail]
 }, index=["Attempts", "Successes", "Failures"])
-
 st.sidebar.bar_chart(stats_df["count"], use_container_width=True)
-st.sidebar.write(f"Success rate: {succ}/{attempts} ({(succ/attempts*100) if attempts>0 else 0:.0f}%)")
+st.sidebar.write(
+    f"Success rate: {succ}/{attempts} "
+    f"({(succ/attempts*100) if attempts>0 else 0:.0f}%)"
+)
 
-# Reset button
-if st.sidebar.button("Reset stats"):
+if st.sidebar.button("🔄 Reset stats"):
     c.execute("DELETE FROM outreach WHERE user=?", (user,))
     conn.commit()
     st.experimental_rerun()
@@ -110,9 +128,11 @@ def fetch_recent_news(keywords):
         for e in feedparser.parse(url).entries:
             try:
                 pub_dt = parsedate_to_datetime(e.get("published",""))
-                pub_dt = (pub_dt.replace(tzinfo=datetime.timezone.utc)
-                          if pub_dt.tzinfo is None
-                          else pub_dt.astimezone(datetime.timezone.utc))
+                pub_dt = (
+                    pub_dt.replace(tzinfo=datetime.timezone.utc)
+                    if pub_dt.tzinfo is None
+                    else pub_dt.astimezone(datetime.timezone.utc)
+                )
             except:
                 continue
             if pub_dt < one_week_ago:
@@ -147,7 +167,9 @@ Output as Title | Link | pubDate | Region, sorted newest first:
 assign_persona   = lambda t: openai_chat(f"Given headline: '{t}', list one relevant persona.")
 score_impact     = lambda t: openai_chat(f"Rate impact 1-5: '{t}'. Reply with only the number.")
 generate_subject = lambda t: openai_chat(f"Write a 6-8 word subject line for: '{t}'.")
-generate_email   = lambda t,p: openai_chat(f"Persona: {p}\nHeadline: {t}\nWrite a concise outreach email.", temp=0.7)
+generate_email   = lambda t,p: openai_chat(
+    f"Persona: {p}\nHeadline: {t}\nWrite a concise outreach email.", temp=0.7
+)
 
 # --- Fetch & Analyze Button ---
 if st.button("🔍 Fetch & Analyze"):
