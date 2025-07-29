@@ -1,0 +1,157 @@
+import streamlit as st
+import feedparser
+import openai
+import pyperclip
+
+# --- Zugangsschutz & API-Key aus Secrets ---
+PASSWORD = st.secrets["PASSWORD"]
+openai.api_key = st.secrets["OPENAI_API_KEY"]
+
+pwd = st.text_input("Bitte Passwort eingeben:", type="password")
+if pwd != PASSWORD:
+    st.error("Ungültiges Passwort!")
+    st.stop()
+
+# --- UI ---
+st.title("Oxford Economics – Sales Email Tool")
+
+sector = st.selectbox("Wähle einen Sektor", [
+    "Professional Services, Government, B2C & Tourism",
+    "Real Estate",
+    "Asset Management & Financial Services",
+    "B2B Manufacturing & Logistics"
+])
+
+# --- Keywords für News-Suche pro Sektor ---
+keywords_by_sector = {
+    "Professional Services, Government, B2C & Tourism": ["services", "government", "tourism", "retail", "public policy"],
+    "Real Estate": ["real estate", "property", "construction", "buildings"],
+    "Asset Management & Financial Services": ["finance", "banking", "asset management", "investment", "markets"],
+    "B2B Manufacturing & Logistics": ["manufacturing", "logistics", "supply chain", "industrial", "infrastructure", "DACH"]
+}
+
+# --- GPT: Filtere relevante Artikel ---
+def filter_news_with_gpt(news_list):
+    headlines = "\n".join(news_list)
+    prompt = f"""Act as a research assistant for Sales at Oxford Economics.
+From this list of headlines (Title | Link | pubDate), return only those that are clearly B2B-relevant to the selected sector or macro-level topics (tariffs, trade policy, supply-chain risk) likely to affect it.
+Try to use Bloomberg and Reuters first. Only include items from the last 7 days.
+
+Output each item as: Title | Link | pubDate | Region, one per line, sorted newest first:
+
+{headlines}
+"""
+    response = openai.chat.completions.create(
+        model="gpt-3.5-turbo",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.2
+    )
+    return response.choices[0].message.content.strip()
+
+# --- GPT: Persona zuordnen ---
+def assign_persona(title):
+    prompt = f"""You are a B2B economics salesperson at Oxford Economics.
+Given this headline: "{title}", list the most relevant persona (job title) to target. Just return one short title like 'COO' or 'Supply Chain Director'."""
+    response = openai.chat.completions.create(
+        model="gpt-4",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.2
+    )
+    return response.choices[0].message.content.strip()
+
+# --- GPT: Scoring (Impact 1–5) ---
+def score_impact(title):
+    prompt = f"""On a scale of 1–5, where 5 = highest business impact, rate this news headline for B2B clients in the selected sector: "{title}". Only reply with a single number."""
+    response = openai.chat.completions.create(
+        model="gpt-4",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.2
+    )
+    return response.choices[0].message.content.strip()
+
+# --- GPT: E-Mail-Text generieren ---
+def generate_email(title, persona):
+    prompt = f"""You are a B2B outreach specialist at Oxford Economics.
+Use this news headline to write a concise outreach email that:
+- Explains the news (no source),
+- Outlines a plausible business impact,
+- Briefly mentions Oxford Economics’ economic insight,
+- Ends with an invitation for a short call.
+
+Persona: {persona}
+Headline: {title}
+
+Keep it professional, helpful, short, and not overly salesy."""
+    response = openai.chat.completions.create(
+        model="gpt-4",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.7
+    )
+    return response.choices[0].message.content.strip()
+
+# --- GPT: Subject Line generieren ---
+def generate_subject(title):
+    prompt = f"""Based on this news headline, write a 6–8-word email subject line that would encourage a busy executive to open: "{title}". Keep it punchy and relevant."""
+    response = openai.chat.completions.create(
+        model="gpt-4",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.7
+    )
+    return response.choices[0].message.content.strip()
+
+# --- News abrufen und Keywords URL-encoden ---
+def fetch_news(keywords):
+    encoded = [kw.replace(" ", "+") for kw in keywords]
+    query = "+".join(encoded)
+    feeds = [
+        f"https://news.google.com/rss/search?q={query}",
+        "https://feeds.reuters.com/reuters/businessNews",
+        "https://feeds.reuters.com/reuters/worldNews",
+        "https://www.bloomberg.com/feed/podcast/bloomberg-surveillance.xml",
+        f"https://www.bing.com/news/search?q={query}&format=rss"
+    ]
+    entries = []
+    seen_links = set()
+    for url in feeds:
+        feed = feedparser.parse(url)
+        for entry in feed.entries:
+            link = entry.get("link", "")
+            if link not in seen_links:
+                seen_links.add(link)
+                title = entry.get("title", "")
+                pubDate = entry.get("published", "")
+                entries.append(f"{title} | {link} | {pubDate}")
+                if len(entries) >= 20:
+                    break
+    return entries
+
+# --- Hauptablauf ---
+if st.button("🔍 Relevante News abrufen & analysieren"):
+    with st.spinner("Lade News..."):
+        raw_news = fetch_news(keywords_by_sector[sector])
+        if not raw_news:
+            st.warning("Keine News gefunden.")
+        else:
+            filtered = filter_news_with_gpt(raw_news)
+            st.success("GPT hat relevante News gefiltert.")
+            rows = filtered.split("\n")
+            for i, row in enumerate(rows):
+                if "|" not in row:
+                    continue
+                parts = [p.strip() for p in row.split("|")]
+                if len(parts) < 3:
+                    continue
+                title, link, pubDate = parts[0], parts[1], parts[2]
+                st.markdown(f"### {i+1}. {title}")
+                st.markdown(f"🗓️ {pubDate} | 🔗 [Quelle]({link})")
+                impact = score_impact(title)
+                persona = assign_persona(title)
+                subject = generate_subject(title)
+                email = generate_email(title, persona)
+                st.write(f"**📊 Impact Score:** {impact}/5")
+                st.write(f"**👤 Persona:** {persona}")
+                st.text_input("✉️ Betreff", subject, key=f"subject_{i}")
+                st.text_area("📧 E-Mail-Vorschlag", email, height=200, key=f"email_{i}")
+                if st.button("📋 In Zwischenablage kopieren", key=f"copy_{i}"):
+                    pyperclip.copy(f"Subject: {subject}\n\n{email}")
+                    st.success("E-Mail in Zwischenablage kopiert. Jetzt in Outlook einfügen.")
