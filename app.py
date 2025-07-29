@@ -10,13 +10,11 @@ import pandas as pd
 # --- Secrets & OpenAI Key ---
 PASSWORD = st.secrets["PASSWORD"]               # e.g. "OETool2025&"
 openai.api_key = st.secrets["OPENAI_API_KEY"]
-users = st.secrets["credentials"]["usernames"]  # Dict username→{name,password}
 
-# --- Add guest + Shah ---
-users["guest"] = {"name": "Guest", "password": PASSWORD}
-users["Shah"]  = {"name": "Shah",  "password": "Shah123"}
+# --- Load all users from Secrets (including guest, Shah, Marvin, Janis, etc.) ---
+users = dict(st.secrets["credentials"]["usernames"])
 
-# --- Session State for Auth + Data ---
+# --- Session State for Auth + Data Persistence ---
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 if "raw_news" not in st.session_state:
@@ -24,7 +22,7 @@ if "raw_news" not in st.session_state:
 if "filtered_news" not in st.session_state:
     st.session_state.filtered_news = ""
 
-# --- Sidebar Login ---
+# --- Sidebar Login / Logout ---
 with st.sidebar:
     if not st.session_state.authenticated:
         st.header("Login")
@@ -71,10 +69,10 @@ if not stats_df.empty:
         (st.session_state.username,)
     ).fetchone()[0]
     total = int(stats_df.loc[1, 'count'])
-    rate = f"{succ}/{total} ({succ/total:.0%})" if total>0 else "N/A"
+    rate = f"{succ}/{total} ({succ/total:.0%})" if total > 0 else "N/A"
     st.sidebar.write("Success rate:", rate)
 
-# --- UI ---
+# --- Main UI ---
 st.title("Oxford Economics – Sales Email Tool")
 sector = st.selectbox("Select a sector", [
     "Professional Services, Government, B2C & Tourism",
@@ -142,9 +140,9 @@ Output as Title | Link | pubDate | Region, sorted newest first:
     return openai_chat(prompt)
 
 assign_persona   = lambda t: openai_chat(f"Given headline: '{t}', list one relevant persona.")
-score_impact     = lambda t: openai_chat(f"Rate impact 1-5: '{t}'. Reply number.")
-generate_subject = lambda t: openai_chat(f"Write a 6-8 word subject for: '{t}'.")
-generate_email   = lambda t,p: openai_chat(f"Persona: {p}\nHeadline: {t}\nWrite concise sales email.", temp=0.7)
+score_impact     = lambda t: openai_chat(f"Rate impact 1-5: '{t}'. Reply with only the number.")
+generate_subject = lambda t: openai_chat(f"Write a 6-8 word subject line for: '{t}'.")
+generate_email   = lambda t,p: openai_chat(f"Persona: {p}\nHeadline: {t}\nWrite a concise outreach email.", temp=0.7)
 
 # --- Fetch & Analyze Button ---
 if st.button("🔍 Fetch & Analyze"):
