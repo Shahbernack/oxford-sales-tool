@@ -43,7 +43,8 @@ def fetch_recent_news(keywords):
         "https://www.bloomberg.com/feed/podcast/bloomberg-surveillance.xml",
         f"https://www.bing.com/news/search?q={query}&format=rss"
     ]
-    one_week_ago = datetime.datetime.utcnow() - datetime.timedelta(days=7)
+    # Erstelle ein bewusstes UTC-Datum 7 Tage zurück
+    one_week_ago = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=7)
     entries = []
     seen_links = set()
 
@@ -53,14 +54,22 @@ def fetch_recent_news(keywords):
             # Datum parsen, skip bei Fehler
             try:
                 pub_dt = parsedate_to_datetime(entry.get("published", ""))
+                # Stelle sicher, dass pub_dt ein UTC-aware datetime ist
+                if pub_dt.tzinfo is None:
+                    pub_dt = pub_dt.replace(tzinfo=datetime.timezone.utc)
+                else:
+                    pub_dt = pub_dt.astimezone(datetime.timezone.utc)
             except Exception:
                 continue
+            # Nur Artikel der letzten 7 Tage
             if pub_dt < one_week_ago:
                 continue
+
             link = entry.get("link", "")
             if link in seen_links:
                 continue
             seen_links.add(link)
+
             title = entry.get("title", "")
             pub_str = entry.get("published", "")
             entries.append(f"{title} | {link} | {pub_str}")
