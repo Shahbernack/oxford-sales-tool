@@ -5,11 +5,29 @@ import pyperclip
 import datetime
 from email.utils import parsedate_to_datetime
 import streamlit_authenticator as stauth
+import sqlite3
+import pandas as pd
 
-# --- Access protection & API key from Secrets ---
+# --- Secrets & OpenAI Key ---
 PASSWORD = st.secrets["PASSWORD"]
 openai.api_key = st.secrets["OPENAI_API_KEY"]
-# Build credentials dict from secrets
+
+# --- SQLite für Tracking ---
+conn = sqlite3.connect('outreach.db', check_same_thread=False)
+c = conn.cursor()
+c.execute("""
+CREATE TABLE IF NOT EXISTS outreach (
+  id INTEGER PRIMARY KEY,
+  user TEXT,
+  title TEXT,
+  ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  used INTEGER,
+  success INTEGER
+)
+""")
+conn.commit()
+
+# --- Authenticator Credentials aus Secrets ---
 credentials = {
     "usernames": {
         user: {"name": info["name"], "password": info["password"]}
@@ -17,25 +35,36 @@ credentials = {
     }
 }
 
-# --- Authentication ---
 authenticator = stauth.Authenticate(
     credentials,
     cookie_name="oxford_sales_tool",
     key="oxford_signature",
     cookie_expiry_days=1
 )
-name, auth_status, username = authenticator.login("Login", location="sidebar")
 
-if auth_status is False:
-    st.error("Username/password is incorrect")
-    st.stop()
-elif auth_status is None:
-    st.warning("Please enter your credentials")
+# -- Login (nutzt default location='main') ---
+name, auth_status, username = authenticator.login("Login")
+if not auth_status:
     st.stop()
 
-# Logout button & show user
 authenticator.logout("Logout", "sidebar")
 st.sidebar.write(f"Logged in as: {name}")
+
+# --- Sidebar Statistik ---
+stats_df = pd.read_sql_query(
+    "SELECT used, COUNT(*) AS count FROM outreach WHERE user = ? GROUP BY used",
+    conn, params=(name,)
+)
+if not stats_df.empty:
+    stats_df = stats_df.set_index('used').reindex([0,1], fill_value=0)
+    st.sidebar.bar_chart(stats_df['count'], use_container_width=True)
+    succ = c.execute(
+        "SELECT COUNT(*) FROM outreach WHERE user=? AND success=1",
+        (name,)
+    ).fetchone()[0]
+    total = stats_df.loc[1, 'count']
+    rate = f"{succ}/{total} ({succ/total:.0%})" if total>0 else "N/A"
+    st.sidebar.write("Success rate:", rate)
 
 # --- UI ---
 st.title("Oxford Economics – Sales Email Tool")
@@ -46,116 +75,112 @@ sector = st.selectbox("Select a sector", [
     "B2B Manufacturing & Logistics"
 ])
 
-# --- Keywords for each sector ---
 keywords_by_sector = {
-    "Professional Services, Government, B2C & Tourism": ["services", "government", "tourism", "retail", "public policy"],
-    "Real Estate": ["real estate", "property", "construction", "buildings"],
-    "Asset Management & Financial Services": ["finance", "banking", "asset management", "investment", "markets"],
-    "B2B Manufacturing & Logistics": ["manufacturing", "logistics", "supply chain", "industrial", "infrastructure", "DACH"]
+    "Professional Services, Government, B2C & Tourism": ["services","government","tourism","retail","public policy"],
+    "Real Estate": ["real estate","property","construction","buildings"],
+    "Asset Management & Financial Services": ["finance","banking","asset management","investment","markets"],
+    "B2B Manufacturing & Logistics": ["manufacturing","logistics","supply chain","industrial","infrastructure","DACH"]
 }
 
-# --- Fetch news from RSS and keep only last 7 days ---
+# --- Fetch & filter news (last 7 days) ---
 def fetch_recent_news(keywords):
-    encoded = [kw.replace(" ", "+") for kw in keywords]
-    query = "+".join(encoded)
+    q = "+".join(kw.replace(" ","+") for kw in keywords)
     feeds = [
-        f"https://news.google.com/rss/search?q={query}",
+        f"https://news.google.com/rss/search?q={q}",
         "https://feeds.reuters.com/reuters/businessNews",
         "https://feeds.reuters.com/reuters/worldNews",
         "https://www.bloomberg.com/feed/podcast/bloomberg-surveillance.xml",
-        f"https://www.bing.com/news/search?q={query}&format=rss",
+        f"https://www.bing.com/news/search?q={q}&format=rss",
         "https://www.ft.com/news-feed?format=rss"
     ]
     one_week_ago = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=7)
     entries, seen = [], set()
-
     for url in feeds:
-        feed = feedparser.parse(url)
-        for e in feed.entries:
+        for e in feedparser.parse(url).entries:
             try:
-                pub_dt = parsedate_to_datetime(e.get("published", ""))
-                if pub_dt.tzinfo is None:
-                    pub_dt = pub_dt.replace(tzinfo=datetime.timezone.utc)
-                else:
-                    pub_dt = pub_dt.astimezone(datetime.timezone.utc)
-            except Exception:
+                pub_dt = parsedate_to_datetime(e.get("published",""))
+                pub_dt = pub_dt.replace(tzinfo=datetime.timezone.utc) if pub_dt.tzinfo is None else pub_dt.astimezone(datetime.timezone.utc)
+            except:
                 continue
-            if pub_dt < one_week_ago:
-                continue
-
-            link = e.get("link", "")
-            if link in seen:
-                continue
+            if pub_dt < one_week_ago: continue
+            link = e.get("link","")
+            if link in seen: continue
             seen.add(link)
-
-            title = e.get("title", "")
-            pub_str = e.get("published", "")
-            entries.append(f"{title} | {link} | {pub_str}")
-            if len(entries) >= 20:
-                break
+            entries.append(f"{e.get('title','')} | {link} | {e.get('published','')}")
+            if len(entries)>=20: break
     return entries
 
-# --- GPT helper ---
 def openai_chat(prompt, model="gpt-3.5-turbo", temp=0.2):
-    resp = openai.chat.completions.create(
+    r = openai.chat.completions.create(
         model=model,
-        messages=[{"role": "user", "content": prompt}],
+        messages=[{"role":"user","content":prompt}],
         temperature=temp
     )
-    return resp.choices[0].message.content.strip()
+    return r.choices[0].message.content.strip()
 
-# --- GPT: Filter relevant articles ---
 def filter_news_with_gpt(news_list):
-    headlines = "\n".join(news_list)
+    h = "\n".join(news_list)
     prompt = f"""You are a research assistant for Sales at Oxford Economics.
-From this list of headlines (Title | Link | pubDate), return only those that are clearly B2B-relevant to European companies in the selected sector or relevant macro topics (tariffs, trade policy, supply-chain risk).
-Prioritize Bloomberg, Reuters, and FT content.
+From these headlines, return only B2B-relevant items for European companies in {sector}.
+Output as Title | Link | pubDate | Region, sorted newest first:
 
-Output each item as: Title | Link | pubDate | Region, one per line, sorted newest first:
-
-{headlines}
+{h}
 """
     return openai_chat(prompt)
 
-# --- GPT: Assign persona, score impact, generate subject & email ---
-assign_persona   = lambda t: openai_chat(f"Given this headline: '{t}', list the single most relevant persona (job title) to target.")
-score_impact    = lambda t: openai_chat(f"On a scale of 1–5, where 5 = highest business impact, rate this news headline: '{t}'. Reply with only the number.")
-generate_subject = lambda t: openai_chat(f"Write a 6-8 word email subject for headline: '{t}'.")
-generate_email   = lambda t,p: openai_chat(f"Persona: {p}\nHeadline: {t}\nWrite a concise outreach email.", temp=0.7)
+assign_persona   = lambda t: openai_chat(f"Given headline: '{t}', list one relevant persona.")
+score_impact     = lambda t: openai_chat(f"Rate impact 1-5: '{t}'. Reply number.")
+generate_subject = lambda t: openai_chat(f"Write a 6-8 word subject for: '{t}'.")
+generate_email   = lambda t,p: openai_chat(f"Persona: {p}\nHeadline: {t}\nWrite concise sales email.", temp=0.7)
 
-# --- Main process ---
-if st.button("🔍 Fetch & Analyze Relevant News"):
-    with st.spinner("Loading news..."):
-        raw_news = fetch_recent_news(keywords_by_sector[sector])
-        if not raw_news:
-            st.warning("No news from the last week found.")
+# --- Main Loop ---
+if st.button("🔍 Fetch & Analyze"):
+    raw = fetch_recent_news(keywords_by_sector[sector])
+    if not raw:
+        st.warning("No news from the last week.")
+    else:
+        with st.expander("Raw fetched news"):
+            for i, item in enumerate(raw):
+                st.write(item)
+
+        filtered = filter_news_with_gpt(raw)
+        if not filtered:
+            st.warning("GPT found no relevant news.")
         else:
-            with st.expander("Raw fetched news"):
-                for item in raw_news:
-                    st.write(item)
+            for i, row in enumerate(filtered.split("\n")):
+                if "|" not in row: continue
+                title, link, pubDate = [p.strip() for p in row.split("|",3)][:3]
+                st.markdown(f"### {i+1}. [{title}]({link})")
+                st.markdown(f"🗓️ {pubDate}")
 
-            filtered = filter_news_with_gpt(raw_news)
-            if not filtered:
-                st.warning("GPT found no relevant news.")
-            else:
-                st.success("GPT filtered relevant news.")
-                for i, row in enumerate(filtered.split("\n")):
-                    if "|" not in row:
-                        continue
-                    title, link, pubDate = [p.strip() for p in row.split("|", 2)]
-                    st.markdown(f"### {i+1}. {title}")
-                    st.markdown(f"🗓️ {pubDate} | 🔗 [Source]({link})")
+                persona = assign_persona(title)
+                impact  = score_impact(title)
+                subject = generate_subject(title)
+                email   = generate_email(title, persona)
 
-                    persona = assign_persona(title)
-                    impact  = score_impact(title)
-                    subject = generate_subject(title)
-                    email   = generate_email(title, persona)
+                st.write(f"**Impact:** {impact}/5  |  **Persona:** {persona}")
+                st.text_input("Subject", subject, key=f"subj_{i}")
+                st.text_area("Email draft", email, height=200, key=f"email_{i}")
 
-                    st.write(f"**📊 Impact Score:** {impact}/5")
-                    st.write(f"**👤 Persona:** {persona}")
-                    st.text_input("✉️ Subject", subject, key=f"subject_{i}")
-                    st.text_area("📧 Email draft", email, height=200, key=f"email_{i}")
-
-                    if st.button("📋 Copy to clipboard", key=f"copy_{i}"):
-                        pyperclip.copy(f"Subject: {subject}\n\n{email}")
-                        st.success("Email copied to clipboard. Paste into Outlook to send.")
+                col1, col2, col3 = st.columns(3)
+                if col1.button("Mark as Used", key=f"used_{i}"):
+                    c.execute(
+                        "INSERT INTO outreach(user,title,used) VALUES (?,?,1)",
+                        (name, title)
+                    )
+                    conn.commit()
+                    st.success("Marked as used")
+                if col2.button("✔️ Success", key=f"succ_{i}"):
+                    c.execute(
+                        "UPDATE outreach SET success=1 WHERE user=? AND title=? ORDER BY ts DESC LIMIT 1",
+                        (name, title)
+                    )
+                    conn.commit()
+                    st.success("Marked success")
+                if col3.button("❌ Fail", key=f"fail_{i}"):
+                    c.execute(
+                        "UPDATE outreach SET success=0 WHERE user=? AND title=? ORDER BY ts DESC LIMIT 1",
+                        (name, title)
+                    )
+                    conn.commit()
+                    st.error("Marked fail")
