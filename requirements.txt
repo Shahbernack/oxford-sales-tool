@@ -2,3 +2,4 @@ streamlit
 feedparser
 openai
 pyperclip
+streamlit-authenticator
