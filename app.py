@@ -4,13 +4,36 @@ import openai
 import pyperclip
 import datetime
 from email.utils import parsedate_to_datetime
-import streamlit_authenticator as stauth
 import sqlite3
 import pandas as pd
 
 # --- Secrets & OpenAI Key ---
 PASSWORD = st.secrets["PASSWORD"]
 openai.api_key = st.secrets["OPENAI_API_KEY"]
+users = st.secrets["credentials"]["usernames"]  # Dict username→{name, password}
+
+# --- Session-State für Authentifizierung ---
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+
+# --- Login UI in Sidebar ---
+with st.sidebar:
+    if not st.session_state.authenticated:
+        st.header("Login")
+        uname = st.text_input("Username")
+        pwd  = st.text_input("Password", type="password")
+        if st.button("Login"):
+            if uname in users and pwd == users[uname]["password"]:
+                st.session_state.authenticated = True
+                st.session_state.username = uname
+            else:
+                st.error("Invalid credentials")
+        st.stop()
+    else:
+        st.write(f"Logged in as **{users[st.session_state.username]['name']}**")
+        if st.button("Logout"):
+            st.session_state.authenticated = False
+            st.experimental_rerun()
 
 # --- SQLite für Tracking ---
 conn = sqlite3.connect('outreach.db', check_same_thread=False)
@@ -27,43 +50,20 @@ CREATE TABLE IF NOT EXISTS outreach (
 """)
 conn.commit()
 
-# --- Authenticator Credentials aus Secrets ---
-credentials = {
-    "usernames": {
-        user: {"name": info["name"], "password": info["password"]}
-        for user, info in st.secrets["credentials"]["usernames"].items()
-    }
-}
-
-authenticator = stauth.Authenticate(
-    credentials,
-    cookie_name="oxford_sales_tool",
-    key="oxford_signature",
-    cookie_expiry_days=1
-)
-
-# --- Login (Location as keyword!) ---
-name, auth_status, username = authenticator.login("Login", location="sidebar")
-if not auth_status:
-    st.stop()
-
-authenticator.logout("Logout", "sidebar")
-st.sidebar.write(f"Logged in as: {name}")
-
 # --- Sidebar Statistik ---
 stats_df = pd.read_sql_query(
     "SELECT used, COUNT(*) AS count FROM outreach WHERE user = ? GROUP BY used",
-    conn, params=(name,)
+    conn, params=(st.session_state.username,)
 )
 if not stats_df.empty:
     stats_df = stats_df.set_index('used').reindex([0,1], fill_value=0)
     st.sidebar.bar_chart(stats_df['count'], use_container_width=True)
     succ = c.execute(
         "SELECT COUNT(*) FROM outreach WHERE user=? AND success=1",
-        (name,)
+        (st.session_state.username,)
     ).fetchone()[0]
     total = stats_df.loc[1, 'count']
-    rate = f"{succ}/{total} ({succ/total:.0%})" if total > 0 else "N/A"
+    rate = f"{succ}/{total} ({succ/total:.0%})" if total>0 else "N/A"
     st.sidebar.write("Success rate:", rate)
 
 # --- UI ---
@@ -143,7 +143,7 @@ if st.button("🔍 Fetch & Analyze"):
         st.warning("No news from the last week.")
     else:
         with st.expander("Raw fetched news"):
-            for i, item in enumerate(raw):
+            for item in raw:
                 st.write(item)
 
         filtered = filter_news_with_gpt(raw)
@@ -153,7 +153,7 @@ if st.button("🔍 Fetch & Analyze"):
             for i, row in enumerate(filtered.split("\n")):
                 if "|" not in row:
                     continue
-                title, link, pubDate = [p.strip() for p in row.split("|", 3)][:3]
+                title, link, pubDate = [p.strip() for p in row.split("|",3)][:3]
                 st.markdown(f"### {i+1}. [{title}]({link})")
                 st.markdown(f"🗓️ {pubDate}")
 
@@ -170,21 +170,21 @@ if st.button("🔍 Fetch & Analyze"):
                 if col1.button("Mark as Used", key=f"used_{i}"):
                     c.execute(
                         "INSERT INTO outreach(user,title,used) VALUES (?,?,1)",
-                        (name, title)
+                        (st.session_state.username, title)
                     )
                     conn.commit()
                     st.success("Marked as used")
                 if col2.button("✔️ Success", key=f"succ_{i}"):
                     c.execute(
                         "UPDATE outreach SET success=1 WHERE user=? AND title=? ORDER BY ts DESC LIMIT 1",
-                        (name, title)
+                        (st.session_state.username, title)
                     )
                     conn.commit()
                     st.success("Marked success")
                 if col3.button("❌ Fail", key=f"fail_{i}"):
                     c.execute(
                         "UPDATE outreach SET success=0 WHERE user=? AND title=? ORDER BY ts DESC LIMIT 1",
-                        (name, title)
+                        (st.session_state.username, title)
                     )
                     conn.commit()
                     st.error("Marked fail")
