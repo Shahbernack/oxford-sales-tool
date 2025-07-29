@@ -34,7 +34,7 @@ keywords_by_sector = {
 def filter_news_with_gpt(news_list):
     headlines = "\n".join(news_list)
     prompt = f"""Act as a research assistant for Sales at Oxford Economics.
-From this list of headlines (Title | Link | pubDate), return only those that are clearly B2B-relevant to the selected sector or macro-level topics (tariffs, trade policy, supply-chain risk) likely to affect it.
+From this list of headlines (Title | Link | pubDate), return only those that are clearly B2B-relevant to companies in Europe and to the selected sector or macro-level topics (tariffs, trade policy, supply-chain risk) likely to affect it.
 Try to use Bloomberg and Reuters first. Only include items from the last 7 days.
 
 Output each item as: Title | Link | pubDate | Region, one per line, sorted newest first:
@@ -53,7 +53,7 @@ def assign_persona(title):
     prompt = f"""You are a B2B economics salesperson at Oxford Economics.
 Given this headline: "{title}", list the most relevant persona (job title) to target. Just return one short title like 'COO' or 'Supply Chain Director'."""
     response = openai.chat.completions.create(
-        model="gpt-4",
+        model="gpt-3.5-turbo",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.2
     )
@@ -63,7 +63,7 @@ Given this headline: "{title}", list the most relevant persona (job title) to ta
 def score_impact(title):
     prompt = f"""On a scale of 1–5, where 5 = highest business impact, rate this news headline for B2B clients in the selected sector: "{title}". Only reply with a single number."""
     response = openai.chat.completions.create(
-        model="gpt-4",
+        model="gpt-3.5-turbo",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.2
     )
@@ -77,13 +77,14 @@ Use this news headline to write a concise outreach email that:
 - Outlines a plausible business impact,
 - Briefly mentions Oxford Economics’ economic insight,
 - Ends with an invitation for a short call.
+- Is Short
 
 Persona: {persona}
 Headline: {title}
 
 Keep it professional, helpful, short, and not overly salesy."""
     response = openai.chat.completions.create(
-        model="gpt-4",
+        model="gpt-3.5-turbo",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.7
     )
@@ -93,7 +94,7 @@ Keep it professional, helpful, short, and not overly salesy."""
 def generate_subject(title):
     prompt = f"""Based on this news headline, write a 6–8-word email subject line that would encourage a busy executive to open: "{title}". Keep it punchy and relevant."""
     response = openai.chat.completions.create(
-        model="gpt-4",
+        model="gpt-3.5-turbo",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.7
     )
