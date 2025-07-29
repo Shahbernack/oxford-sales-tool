@@ -41,17 +41,17 @@ def fetch_recent_news(keywords):
         "https://feeds.reuters.com/reuters/businessNews",
         "https://feeds.reuters.com/reuters/worldNews",
         "https://www.bloomberg.com/feed/podcast/bloomberg-surveillance.xml",
-        f"https://www.bing.com/news/search?q={query}&format=rss"
+        f"https://www.bing.com/news/search?q={query}&format=rss",
+        "https://www.ft.com/news-feed?format=rss"
     ]
     one_week_ago = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=7)
-    entries = []
-    seen_links = set()
+    entries, seen = [], set()
 
     for url in feeds:
         feed = feedparser.parse(url)
-        for entry in feed.entries:
+        for e in feed.entries:
             try:
-                pub_dt = parsedate_to_datetime(entry.get("published", ""))
+                pub_dt = parsedate_to_datetime(e.get("published", ""))
                 if pub_dt.tzinfo is None:
                     pub_dt = pub_dt.replace(tzinfo=datetime.timezone.utc)
                 else:
@@ -61,13 +61,13 @@ def fetch_recent_news(keywords):
             if pub_dt < one_week_ago:
                 continue
 
-            link = entry.get("link", "")
-            if link in seen_links:
+            link = e.get("link", "")
+            if link in seen:
                 continue
-            seen_links.add(link)
+            seen.add(link)
 
-            title = entry.get("title", "")
-            pub_str = entry.get("published", "")
+            title = e.get("title", "")
+            pub_str = e.get("published", "")
             entries.append(f"{title} | {link} | {pub_str}")
             if len(entries) >= 20:
                 break
@@ -78,39 +78,39 @@ def filter_news_with_gpt(news_list):
     headlines = "\n".join(news_list)
     prompt = f"""You are a research assistant for Sales at Oxford Economics.
 From this list of headlines (Title | Link | pubDate), return only those that are clearly B2B-relevant to European companies in the selected sector or relevant macro topics (tariffs, trade policy, supply-chain risk).
-Prioritize Bloomberg and Reuters content.
+Prioritize Bloomberg, Reuters, and FT content.
 
 Output each item as: Title | Link | pubDate | Region, one per line, sorted newest first:
 
 {headlines}
 """
-    response = openai.chat.completions.create(
+    resp = openai.chat.completions.create(
         model="gpt-3.5-turbo",
-        messages=[{"role": "user", "content": prompt}],
+        messages=[{"role":"user","content":prompt}],
         temperature=0.2
     )
-    return response.choices[0].message.content.strip()
+    return resp.choices[0].message.content.strip()
 
 # --- GPT: Assign persona ---
 def assign_persona(title):
     prompt = f"""You are a B2B economics salesperson at Oxford Economics.
 Given this headline: "{title}", list the single most relevant persona (job title) to target, such as 'COO' or 'Supply Chain Director'."""
-    response = openai.chat.completions.create(
+    resp = openai.chat.completions.create(
         model="gpt-3.5-turbo",
-        messages=[{"role": "user", "content": prompt}],
+        messages=[{"role":"user","content":prompt}],
         temperature=0.2
     )
-    return response.choices[0].message.content.strip()
+    return resp.choices[0].message.content.strip()
 
 # --- GPT: Score impact (1–5) ---
 def score_impact(title):
     prompt = f"""On a scale of 1–5, where 5 = highest business impact, rate this news headline for B2B clients in the selected sector: "{title}". Reply with only the number."""
-    response = openai.chat.completions.create(
+    resp = openai.chat.completions.create(
         model="gpt-3.5-turbo",
-        messages=[{"role": "user", "content": prompt}],
+        messages=[{"role":"user","content":prompt}],
         temperature=0.2
     )
-    return response.choices[0].message.content.strip()
+    return resp.choices[0].message.content.strip()
 
 # --- GPT: Generate email body ---
 def generate_email(title, persona):
@@ -125,22 +125,22 @@ Persona: {persona}
 Headline: {title}
 
 Keep it professional, helpful, and to the point."""
-    response = openai.chat.completions.create(
+    resp = openai.chat.completions.create(
         model="gpt-3.5-turbo",
-        messages=[{"role": "user", "content": prompt}],
+        messages=[{"role":"user","content":prompt}],
         temperature=0.7
     )
-    return response.choices[0].message.content.strip()
+    return resp.choices[0].message.content.strip()
 
 # --- GPT: Generate subject line ---
 def generate_subject(title):
     prompt = f"""Based on this news headline, write a 6–8-word email subject line that would encourage a busy executive to open: "{title}". Keep it punchy."""
-    response = openai.chat.completions.create(
+    resp = openai.chat.completions.create(
         model="gpt-3.5-turbo",
-        messages=[{"role": "user", "content": prompt}],
+        messages=[{"role":"user","content":prompt}],
         temperature=0.7
     )
-    return response.choices[0].message.content.strip()
+    return resp.choices[0].message.content.strip()
 
 # --- Main process ---
 if st.button("🔍 Fetch & Analyze Relevant News"):
@@ -150,16 +150,15 @@ if st.button("🔍 Fetch & Analyze Relevant News"):
             st.warning("No news from the last week found.")
         else:
             with st.expander("Raw fetched news"):
-                for entry in raw_news:
-                    st.write(entry)
+                for item in raw_news:
+                    st.write(item)
 
             filtered = filter_news_with_gpt(raw_news)
             if not filtered:
                 st.warning("GPT found no relevant news.")
             else:
                 st.success("GPT filtered relevant news.")
-                rows = filtered.split("\n")
-                for i, row in enumerate(rows):
+                for i, row in enumerate(filtered.split("\n")):
                     if "|" not in row:
                         continue
                     title, link, pubDate = [p.strip() for p in row.split("|", 2)]
