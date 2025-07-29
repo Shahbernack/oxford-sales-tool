@@ -8,20 +8,28 @@ import sqlite3
 import pandas as pd
 
 # --- Secrets & OpenAI Key ---
-PASSWORD = st.secrets["PASSWORD"]
+PASSWORD = st.secrets["PASSWORD"]               # e.g. "OETool2025&"
 openai.api_key = st.secrets["OPENAI_API_KEY"]
-users = st.secrets["credentials"]["usernames"]  # Dict username→{name, password}
+users = st.secrets["credentials"]["usernames"]  # Dict username→{name,password}
 
-# --- Session-State für Authentifizierung ---
+# --- Add guest + Shah ---
+users["guest"] = {"name": "Guest", "password": PASSWORD}
+users["Shah"]  = {"name": "Shah",  "password": "Shah123"}
+
+# --- Session State for Auth + Data ---
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
+if "raw_news" not in st.session_state:
+    st.session_state.raw_news = []
+if "filtered_news" not in st.session_state:
+    st.session_state.filtered_news = ""
 
-# --- Login UI in Sidebar ---
+# --- Sidebar Login ---
 with st.sidebar:
     if not st.session_state.authenticated:
         st.header("Login")
         uname = st.text_input("Username")
-        pwd  = st.text_input("Password", type="password")
+        pwd   = st.text_input("Password", type="password")
         if st.button("Login"):
             if uname in users and pwd == users[uname]["password"]:
                 st.session_state.authenticated = True
@@ -35,7 +43,7 @@ with st.sidebar:
             st.session_state.authenticated = False
             st.experimental_rerun()
 
-# --- SQLite für Tracking ---
+# --- SQLite for Tracking ---
 conn = sqlite3.connect('outreach.db', check_same_thread=False)
 c = conn.cursor()
 c.execute("""
@@ -50,7 +58,7 @@ CREATE TABLE IF NOT EXISTS outreach (
 """)
 conn.commit()
 
-# --- Sidebar Statistik ---
+# --- Sidebar Statistics ---
 stats_df = pd.read_sql_query(
     "SELECT used, COUNT(*) AS count FROM outreach WHERE user = ? GROUP BY used",
     conn, params=(st.session_state.username,)
@@ -62,7 +70,7 @@ if not stats_df.empty:
         "SELECT COUNT(*) FROM outreach WHERE user=? AND success=1",
         (st.session_state.username,)
     ).fetchone()[0]
-    total = stats_df.loc[1, 'count']
+    total = int(stats_df.loc[1, 'count'])
     rate = f"{succ}/{total} ({succ/total:.0%})" if total>0 else "N/A"
     st.sidebar.write("Success rate:", rate)
 
@@ -82,7 +90,7 @@ keywords_by_sector = {
     "B2B Manufacturing & Logistics": ["manufacturing","logistics","supply chain","industrial","infrastructure","DACH"]
 }
 
-# --- Fetch & filter news (last 7 days) ---
+# --- Fetch & Filter Functions ---
 def fetch_recent_news(keywords):
     q = "+".join(kw.replace(" ","+") for kw in keywords)
     feeds = [
@@ -99,7 +107,9 @@ def fetch_recent_news(keywords):
         for e in feedparser.parse(url).entries:
             try:
                 pub_dt = parsedate_to_datetime(e.get("published",""))
-                pub_dt = pub_dt.replace(tzinfo=datetime.timezone.utc) if pub_dt.tzinfo is None else pub_dt.astimezone(datetime.timezone.utc)
+                pub_dt = (pub_dt.replace(tzinfo=datetime.timezone.utc)
+                          if pub_dt.tzinfo is None
+                          else pub_dt.astimezone(datetime.timezone.utc))
             except:
                 continue
             if pub_dt < one_week_ago:
@@ -136,55 +146,57 @@ score_impact     = lambda t: openai_chat(f"Rate impact 1-5: '{t}'. Reply number.
 generate_subject = lambda t: openai_chat(f"Write a 6-8 word subject for: '{t}'.")
 generate_email   = lambda t,p: openai_chat(f"Persona: {p}\nHeadline: {t}\nWrite concise sales email.", temp=0.7)
 
-# --- Main Loop ---
+# --- Fetch & Analyze Button ---
 if st.button("🔍 Fetch & Analyze"):
-    raw = fetch_recent_news(keywords_by_sector[sector])
-    if not raw:
-        st.warning("No news from the last week.")
+    st.session_state.raw_news = fetch_recent_news(keywords_by_sector[sector])
+    if st.session_state.raw_news:
+        st.session_state.filtered_news = filter_news_with_gpt(st.session_state.raw_news)
     else:
-        with st.expander("Raw fetched news"):
-            for item in raw:
-                st.write(item)
+        st.session_state.filtered_news = ""
 
-        filtered = filter_news_with_gpt(raw)
-        if not filtered:
-            st.warning("GPT found no relevant news.")
-        else:
-            for i, row in enumerate(filtered.split("\n")):
-                if "|" not in row:
-                    continue
-                title, link, pubDate = [p.strip() for p in row.split("|",3)][:3]
-                st.markdown(f"### {i+1}. [{title}]({link})")
-                st.markdown(f"🗓️ {pubDate}")
+# --- Display Raw News ---
+if st.session_state.raw_news:
+    with st.expander("Raw fetched news"):
+        for item in st.session_state.raw_news:
+            st.write(item)
 
-                persona = assign_persona(title)
-                impact  = score_impact(title)
-                subject = generate_subject(title)
-                email   = generate_email(title, persona)
+# --- Display Filtered & Email Workflow ---
+if st.session_state.filtered_news:
+    for i, row in enumerate(st.session_state.filtered_news.split("\n")):
+        if "|" not in row:
+            continue
+        title, link, pubDate = [p.strip() for p in row.split("|",3)][:3]
+        st.markdown(f"### {i+1}. [{title}]({link})")
+        st.markdown(f"🗓️ {pubDate}")
 
-                st.write(f"**Impact:** {impact}/5  |  **Persona:** {persona}")
-                st.text_input("Subject", subject, key=f"subj_{i}")
-                st.text_area("Email draft", email, height=200, key=f"email_{i}")
+        persona = assign_persona(title)
+        impact  = score_impact(title)
+        subject = generate_subject(title)
+        email   = generate_email(title, persona)
 
-                col1, col2, col3 = st.columns(3)
-                if col1.button("Mark as Used", key=f"used_{i}"):
-                    c.execute(
-                        "INSERT INTO outreach(user,title,used) VALUES (?,?,1)",
-                        (st.session_state.username, title)
-                    )
-                    conn.commit()
-                    st.success("Marked as used")
-                if col2.button("✔️ Success", key=f"succ_{i}"):
-                    c.execute(
-                        "UPDATE outreach SET success=1 WHERE user=? AND title=? ORDER BY ts DESC LIMIT 1",
-                        (st.session_state.username, title)
-                    )
-                    conn.commit()
-                    st.success("Marked success")
-                if col3.button("❌ Fail", key=f"fail_{i}"):
-                    c.execute(
-                        "UPDATE outreach SET success=0 WHERE user=? AND title=? ORDER BY ts DESC LIMIT 1",
-                        (st.session_state.username, title)
-                    )
-                    conn.commit()
-                    st.error("Marked fail")
+        st.write(f"**Impact:** {impact}/5  |  **Persona:** {persona}")
+        st.text_input("Subject", subject, key=f"subj_{i}")
+        st.text_area("Email draft", email, height=200, key=f"email_{i}")
+
+        col1, col2, col3 = st.columns(3)
+        if col1.button("Mark as Used", key=f"used_{i}"):
+            c.execute(
+                "INSERT INTO outreach(user,title,used) VALUES (?,?,1)",
+                (st.session_state.username, title)
+            )
+            conn.commit()
+            st.success("Marked as used")
+        if col2.button("✔️ Success", key=f"succ_{i}"):
+            c.execute(
+                "UPDATE outreach SET success=1 WHERE user=? AND title=? ORDER BY ts DESC LIMIT 1",
+                (st.session_state.username, title)
+            )
+            conn.commit()
+            st.success("Marked success")
+        if col3.button("❌ Fail", key=f"fail_{i}"):
+            c.execute(
+                "UPDATE outreach SET success=0 WHERE user=? AND title=? ORDER BY ts DESC LIMIT 1",
+                (st.session_state.username, title)
+            )
+            conn.commit()
+            st.error("Marked fail")
