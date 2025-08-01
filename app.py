@@ -40,15 +40,7 @@ with st.sidebar:
     else:
         st.write(f"Logged in as **{users[st.session_state.username]['name']}**")
 
-        # Easter Egg: click 3× for Jim glance
-        if st.button("🐰 Surprise me!"):
-            st.session_state.easter_count += 1
-
-        if st.session_state.easter_count >= 3:
-            st.image(
-                "https://media.giphy.com/media/3oEjI6SIIHBdRxXI40/giphy.gif",
-                caption="Jim knows what's up."
-            )
+        
 
         if st.button("Logout"):
             st.session_state.authenticated = False
